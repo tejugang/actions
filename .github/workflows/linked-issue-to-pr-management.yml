@@ -14,7 +14,6 @@ jobs:
         env: 
           REVIEWERS: "krkn-maintainers"
         with:
-          github-token: ${{ secrets.ISSUE_PR_CLASSIC }}
           script: |
             const issue = context.payload.issue;
             const action = context.payload.action;
@@ -51,40 +50,7 @@ jobs:
                 console.log(`Label ${context.payload.label.name} added - no action needed`);
                 return;
               }
-              const labeler = context.actor;
-              let isMaintainer = null;
-              try {
-                const {data: members} = await github.rest.teams.listMembersInOrg({
-                  org: context.repo.owner,
-                  team_slug: process.env.REVIEWERS
-                });
-                isMaintainer = members.some(member => member.login === labeler);
-              } catch (error) {
-              console.log(`Error fetching team members: ${error.message}`);
-              return;
-            }
-
-
-              if (!isMaintainer) {
-                console.log(`${labeler} is not a maintainer - removing 'triage/accepted' label`);
-
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  name: 'triage/accepted'
-                });
-
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  body: `@${labeler} only maintainers can apply the \`triage/accepted\` label. This label has been removed.`
-                });
-
-                return;
-              }
-              
+                         
               // Remove needs-triage
               try {
                 await github.rest.issues.removeLabel({
@@ -150,15 +116,27 @@ jobs:
               return;
             }
             // Check the first linked issue
-            const issues = JSON.parse(issuesOutput);
+            let issues;
+            try {
+              issues = JSON.parse(issuesOutput);
+            } catch (e) {
+              console.error(`Failed to parse linked issues output: ${e.message}`);
+              const comment = `Unable to determine linked issues for this PR.`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: comment
+              });
+              return;
+            }
 
             if (!issues || issues.length === 0) {
               console.log('No issues in output despite count > 0');
               return;
             }
 
-            // Extract issue number - handle both #123 and 123 formats
-            const issueRef = issues[0];
+            // Extract issue number - handles #123 format
             const issueNumber = parseInt(issues[0].split('#')[1]);
 
             try {
