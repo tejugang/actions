@@ -1,0 +1,89 @@
+name: Label via slash comment
+on:
+  workflow_call:
+
+jobs:
+  add-label:
+    if: startsWith(github.event.comment.body, '/') && !contains(github.event.comment.body, ' ')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify collaborator and add label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const body = context.payload.comment.body.trim();
+              const label = body.slice(1);
+
+              if (!label) return;
+
+              let permission;
+              try {
+                const { data: permLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: context.payload.comment.user.login,
+                });
+                permission = permLevel.permission;
+              } catch (error) {
+                console.log(`Could not fetch permission level: ${error.message} — denying access`);
+                return;
+              }
+
+              const allowed = ['admin', 'maintain', 'write'];
+              if (!allowed.includes(permission)) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `@${context.payload.comment.user.login} You do not have sufficient permissions to add labels.`,
+                });
+                return;
+              }
+
+              const repoLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              const repoLabel = repoLabels.find(l => l.name.toLowerCase() === label.toLowerCase());
+
+              if (!repoLabel) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `@${context.payload.comment.user.login} Label \`${label}\` does not exist in this repo.`,
+                });
+                return;
+              }
+
+              const canonicalLabel = repoLabel.name;
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [canonicalLabel],
+              });
+              console.log(`Added label "${canonicalLabel}"`);
+
+              if (canonicalLabel.toLowerCase() === 'triage/accepted') {
+                const issueLabels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                });
+                const hasNeedsTriage = issueLabels.some(l => l.name.toLowerCase() === 'needs-triage');
+                if (hasNeedsTriage) {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    name: 'needs-triage',
+                  });
+                  console.log('Removed label "needs-triage"');
+                }
+              }
+            } catch (err) {
+              core.setFailed(`Failed to process label command: ${err.message}`);
+            }
