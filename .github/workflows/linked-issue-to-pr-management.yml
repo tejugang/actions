@@ -2,6 +2,9 @@ name: Linked issue to PR Management
 
 on:
   workflow_call:
+    secrets:
+      ISSUE_PR_CLASSIC:
+        required: true
 
 jobs:
   handle-issue:
@@ -94,6 +97,7 @@ jobs:
           LINKED_ISSUES_COUNT: ${{ steps.check-linked-issues.outputs.linked_issues_count }}
           ISSUES_OUTPUT: ${{ steps.check-linked-issues.outputs.issues }}
           REVIEWERS: "krkn-maintainers"
+          ISSUE_PR_CLASSIC: ${{ secrets.ISSUE_PR_CLASSIC }}
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -163,23 +167,26 @@ jobs:
               }
 
               // PR creator is assigned to the issue - assign reviewers
-
-              await github.rest.pulls.requestReviewers({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                team_reviewers: [process.env.REVIEWERS]
-              });
-             
-              const comment = `Thanks for your contribution! A reviewer has been assigned to review your PR.`;
-
+              try {
+                const { getOctokit } = require('@actions/github');
+                const patOctokit = getOctokit(process.env.ISSUE_PR_CLASSIC);
+                await patOctokit.rest.pulls.requestReviewers({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  team_reviewers: [process.env.REVIEWERS]
+                });
+                console.log(`Assigned reviewers: ${process.env.REVIEWERS}`);
+                const comment = `Thanks for your contribution! A reviewer has been assigned to review your PR.`;
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: pr.number,
                   body: comment
                 });
-              console.log(`Assigned reviewers: ${process.env.REVIEWERS}`);
+              } catch (reviewError) {
+                console.error(`Error assigning reviewers: ${reviewError.message}`);
+              }
 
             } catch (error) {
               console.error(`Error checking issue #${issueNumber}:`, error);
